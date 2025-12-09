@@ -8,17 +8,18 @@ class Config:
     POSITIVE_DIR = DATA_DIR / "Positive"
     NEGATIVE_DIR = DATA_DIR / "Negative"
 
-    # Параметры модели (оптимизированы под вашу 1050Ti)
-    BATCH_SIZE = 16  # Меньше из-за ограниченной памяти GPU
-    IMG_SIZE = (128, 128)  # Уменьшаем с 227x227 для экономии памяти
-    NUM_EPOCHS = 10
+    # Параметры модели
+    MODEL_TYPE = "simple"  # "simple", "dynamic", "gap"
+    BATCH_SIZE = 16
+    IMG_SIZE = (128, 128)
+    NUM_EPOCHS = 4
     LEARNING_RATE = 0.001
 
     # Архитектура
     NUM_CLASSES = 2
 
     # Настройки обучения
-    NUM_WORKERS = 4  # i5-9400f имеет 6 ядер
+    NUM_WORKERS = 4
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Сохранение модели

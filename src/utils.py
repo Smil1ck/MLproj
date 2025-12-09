@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
 from .config import Config
+from .model import create_model
 
 
 def save_checkpoint(state, filename='checkpoint.pth'):
@@ -12,19 +13,40 @@ def save_checkpoint(state, filename='checkpoint.pth'):
     torch.save(state, filename)
     print(f"Checkpoint saved to {filename}")
 
+    # Проверка размера файла
+    size_mb = Path(filename).stat().st_size / (1024 * 1024)
+    print(f"File size: {size_mb:.1f} MB")
 
-def load_checkpoint(filename, model, optimizer=None):
+
+def load_checkpoint(filename, model=None, optimizer=None, model_type=None):
     """Загрузка чекпоинта"""
-    if Path(filename).exists():
-        checkpoint = torch.load(filename, map_location=Config.DEVICE)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        if optimizer and 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        print(f"Loaded checkpoint from {filename}")
-        return checkpoint
-    else:
+    if not Path(filename).exists():
         print(f"No checkpoint found at {filename}")
         return None
+
+    checkpoint = torch.load(filename, map_location=Config.DEVICE)
+
+    # Определяем тип модели
+    if model_type is None:
+        model_type = checkpoint.get('model_type', 'simple')
+
+    # Создаем модель, если не предоставлена
+    if model is None:
+        from .model import create_model
+        model = create_model(model_type)
+
+    # Загружаем веса
+    model.load_state_dict(checkpoint['model_state_dict'])
+
+    if optimizer and 'optimizer_state_dict' in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    print(f"Loaded checkpoint from {filename}")
+    print(f"Model type: {model_type}")
+    print(f"Epoch: {checkpoint.get('epoch', 'N/A')}")
+    print(f"Validation accuracy: {checkpoint.get('val_acc', 'N/A')}%")
+
+    return checkpoint
 
 
 def plot_training_history(history):
@@ -50,7 +72,9 @@ def plot_training_history(history):
     axes[1].grid(True)
 
     plt.tight_layout()
-    plt.savefig(Config.SAVE_DIR / 'training_history.png', dpi=150)
+    save_path = Config.SAVE_DIR / f'training_history_{Config.MODEL_TYPE}.png'
+    plt.savefig(save_path, dpi=150)
+    print(f"Training history saved to {save_path}")
     plt.show()
 
 
@@ -81,3 +105,34 @@ def predict_image(model, image_path):
     confidence = probabilities[0][predicted.item()].item()
 
     return predicted_class, confidence
+
+
+def compare_models(models_dict):
+    """Сравнение нескольких моделей"""
+    results = {}
+
+    for name, model in models_dict.items():
+        # Тестируем на небольшом наборе
+        from .dataset import get_dataloaders
+        _, val_loader = get_dataloaders()
+
+        model.eval()
+        correct = 0
+        total = 0
+
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to(Config.DEVICE), labels.to(Config.DEVICE)
+                outputs = model(images)
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
+
+        accuracy = 100. * correct / total
+        results[name] = {
+            'accuracy': accuracy,
+            'params': sum(p.numel() for p in model.parameters()),
+            'trainable': sum(p.numel() for p in model.parameters() if p.requires_grad)
+        }
+
+    return results

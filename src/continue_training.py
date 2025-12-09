@@ -1,4 +1,3 @@
-# continue_training.py
 import argparse
 import torch
 import os
@@ -17,7 +16,8 @@ def continue_training(
         additional_epochs=5,
         new_lr=None,
         new_batch_size=None,
-        model_name="continued_model.pth"
+        new_img_size=None,
+        model_name=None
 ):
     """
     Продолжение обучения модели из чекпоинта
@@ -26,7 +26,8 @@ def continue_training(
     - checkpoint_path: путь к сохраненной модели
     - additional_epochs: сколько эпох дообучать
     - new_lr: новая скорость обучения (если None, берется из чекпоинта)
-    - new_batch_size: новый размер батча (если None, берется из Config)
+    - new_batch_size: новый размер батча
+    - new_img_size: новый размер изображения (tuple)
     - model_name: имя для сохранения дообученной модели
     """
 
@@ -39,42 +40,55 @@ def continue_training(
         print(f"Ошибка: чекпоинт {checkpoint_path} не найден!")
         return None
 
-    # Загрузка конфигурации
-    if new_batch_size:
-        original_batch_size = Config.BATCH_SIZE
-        Config.BATCH_SIZE = new_batch_size
-        print(f"Изменен batch_size: {original_batch_size} -> {new_batch_size}")
+    # Загрузка чекпоинта для получения информации
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
 
-    # Создание модели и оптимизатора
-    model = create_model()
-    optimizer = optim.Adam(model.parameters(), lr=Config.LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
+    # Определяем тип модели из чекпоинта
+    model_type = checkpoint.get('model_type', 'simple')
+    original_img_size = checkpoint.get('img_size', (128, 128))
 
-    # Загрузка чекпоинта
-    checkpoint = torch.load(checkpoint_path, map_location=Config.DEVICE)
+    # Обновляем конфиг
+    Config.MODEL_TYPE = model_type
 
-    # Проверка структуры чекпоинта
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print(f"Загружены веса модели")
+    if new_img_size:
+        Config.IMG_SIZE = tuple(new_img_size)
     else:
-        model.load_state_dict(checkpoint)  # Если сохранены только веса
-        print(f"Загружены только веса модели")
+        Config.IMG_SIZE = original_img_size
+
+    if new_batch_size:
+        Config.BATCH_SIZE = new_batch_size
+
+    print(f"Тип модели: {model_type}")
+    print(f"Размер изображения: {Config.IMG_SIZE}")
+    print(f"Batch size: {Config.BATCH_SIZE}")
+
+    # Создание модели
+    model = create_model(model_type)
+
+    # Загружаем веса
+    model.load_state_dict(checkpoint['model_state_dict'])
+    print(f"Загружены веса модели")
+
+    # Создаем оптимизатор
+    if new_lr:
+        lr = new_lr
+    else:
+        lr = checkpoint.get('learning_rate', Config.LEARNING_RATE)
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
 
     if 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         print(f"Загружено состояние оптимизатора")
 
-    # Изменение learning rate если нужно
-    if new_lr:
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = new_lr
-        print(f"Learning rate изменен: {checkpoint.get('learning_rate', 'N/A')} -> {new_lr}")
+    # Функция потерь
+    criterion = nn.CrossEntropyLoss()
 
     # Получение номера последней эпохи
     last_epoch = checkpoint.get('epoch', 0)
     print(f"Последняя обученная эпоха: {last_epoch}")
     print(f"Лучшая точность: {checkpoint.get('val_acc', 'N/A')}%")
+    print(f"Learning rate: {lr}")
 
     # Загрузка истории если есть
     history = checkpoint.get('history', {
@@ -82,7 +96,7 @@ def continue_training(
         'val_loss': [], 'val_acc': []
     })
 
-    # Загрузка данных
+    # Загрузка данных (с новым размером если изменился)
     train_loader, val_loader = get_dataloaders()
 
     # Переводим модель в режим обучения
@@ -159,18 +173,24 @@ def continue_training(
 
         # Сохранение промежуточного чекпоинта
         if (epoch + 1) % 2 == 0:  # Сохранять каждые 2 эпохи
-            checkpoint_path = Config.SAVE_DIR / f"checkpoint_epoch_{current_epoch}.pth"
+            checkpoint_filename = Config.SAVE_DIR / f"checkpoint_{model_type}_epoch_{current_epoch}.pth"
             save_checkpoint({
                 'epoch': current_epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc': val_acc,
                 'history': history,
-                'learning_rate': optimizer.param_groups[0]['lr']
-            }, filename=checkpoint_path)
-            print(f"Сохранен чекпоинт: {checkpoint_path}")
+                'learning_rate': optimizer.param_groups[0]['lr'],
+                'model_type': model_type,
+                'img_size': Config.IMG_SIZE,
+                'model_class': model.__class__.__name__
+            }, filename=checkpoint_filename)
+            print(f"Сохранен чекпоинт: {checkpoint_filename}")
 
-    # Сохранение финальной модели
+    # Определяем имя для финальной модели
+    if model_name is None:
+        model_name = f"continued_{model_type}.pth"
+
     final_path = Config.SAVE_DIR / model_name
     save_checkpoint({
         'epoch': last_epoch + additional_epochs,
@@ -178,7 +198,10 @@ def continue_training(
         'optimizer_state_dict': optimizer.state_dict(),
         'val_acc': val_acc,
         'history': history,
-        'learning_rate': optimizer.param_groups[0]['lr']
+        'learning_rate': optimizer.param_groups[0]['lr'],
+        'model_type': model_type,
+        'img_size': Config.IMG_SIZE,
+        'model_class': model.__class__.__name__
     }, filename=final_path)
 
     print(f"\n=== ДООБУЧЕНИЕ ЗАВЕРШЕНО ===")
@@ -200,12 +223,16 @@ def main():
                         help='Количество дополнительных эпох (по умолчанию: 5)')
 
     parser.add_argument('--lr', type=float, default=None,
-                        help='Новая скорость обучения (если не указана, берется из чекпоинта)')
+                        help='Новая скорость обучения')
 
     parser.add_argument('--batch_size', type=int, default=None,
                         help='Новый размер батча')
 
-    parser.add_argument('--output', type=str, default="continued_model.pth",
+    parser.add_argument('--img_size', type=int, nargs=2, default=None,
+                        metavar=('WIDTH', 'HEIGHT'),
+                        help='Новый размер изображения')
+
+    parser.add_argument('--output', type=str, default=None,
                         help='Имя выходного файла модели')
 
     args = parser.parse_args()
@@ -226,6 +253,7 @@ def main():
         additional_epochs=args.epochs,
         new_lr=args.lr,
         new_batch_size=args.batch_size,
+        new_img_size=args.img_size,
         model_name=args.output
     )
 

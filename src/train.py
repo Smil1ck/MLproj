@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from pathlib import Path
 from .config import Config
-from .model import create_model
+from .model import create_model, get_model_info
 from .dataset import get_dataloaders
 from .utils import save_checkpoint, load_checkpoint
 
@@ -80,11 +80,14 @@ def validate(model, val_loader, criterion, device):
     return epoch_loss, epoch_acc
 
 
-def train_model():
+def train_model(model_type=None):
     """Основной цикл обучения"""
     # Инициализация
+    if model_type:
+        Config.MODEL_TYPE = model_type
+
     train_loader, val_loader = get_dataloaders()
-    model = create_model()
+    model = create_model(model_type)
 
     # Loss и optimizer
     criterion = nn.CrossEntropyLoss()
@@ -93,8 +96,13 @@ def train_model():
         optimizer, mode='min', factor=0.5, patience=2
     )
 
+    # Информация о модели
+    model_info = get_model_info(model)
     print(f"Training on: {Config.DEVICE}")
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Model: {model_info['model_class']}")
+    print(f"Total parameters: {model_info['total_params']:,}")
+    print(f"Trainable parameters: {model_info['trainable_params']:,}")
+    print(f"Image size: {Config.IMG_SIZE}")
     print(f"Training samples: {len(train_loader.dataset)}")
     print(f"Validation samples: {len(val_loader.dataset)}")
 
@@ -104,7 +112,7 @@ def train_model():
     # Цикл обучения
     for epoch in range(Config.NUM_EPOCHS):
         print(f"\nEpoch {epoch + 1}/{Config.NUM_EPOCHS}")
-        print("-" * 30)
+        print("-" * 50)
 
         # Обучение
         train_loss, train_acc = train_epoch(
@@ -133,8 +141,11 @@ def train_model():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_acc': val_acc,
-                'history': history
-            }, filename=Config.SAVE_DIR / 'best_model.pth')
+                'history': history,
+                'model_type': Config.MODEL_TYPE,
+                'img_size': Config.IMG_SIZE,
+                'model_class': model.__class__.__name__
+            }, filename=Config.SAVE_DIR / f'best_{Config.MODEL_TYPE}.pth')
             print(f"Saved best model with validation accuracy: {val_acc:.2f}%")
 
         print(f"\nTrain Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
@@ -146,7 +157,10 @@ def train_model():
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'val_acc': val_acc,
-        'history': history
-    }, filename=Config.SAVE_DIR / 'last_model.pth')
+        'history': history,
+        'model_type': Config.MODEL_TYPE,
+        'img_size': Config.IMG_SIZE,
+        'model_class': model.__class__.__name__
+    }, filename=Config.SAVE_DIR / f'last_{Config.MODEL_TYPE}.pth')
 
     return model, history
