@@ -47,6 +47,9 @@ def main():
                         help='Создать визуализации результатов')
     parser.add_argument('--dashboard', action='store_true',
                         help='Создать интерактивный дашборд')
+    # Добавляем новый параметр
+    parser.add_argument('--savemodel', action='store_true',
+                        help='Сохранить модель после обучения')
 
     args = parser.parse_args()
 
@@ -88,6 +91,10 @@ def main():
     print(f"Learning rate: {Config.LEARNING_RATE}")
     print(f"Устройство: {Config.DEVICE}")
 
+    # Добавляем информацию о сохранении модели
+    if args.mode == 'train' and args.savemodel:
+        print(f"Сохранение модели: ВКЛЮЧЕНО")
+
     if args.mode in ['train', 'test', 'evaluate', 'dashboard']:
         print(f"\n=== ДАННЫЕ ===")
         print(f"С трещинами: {pos_count}")
@@ -107,6 +114,10 @@ def main():
             visualizer.plot_training_history(history, args.model)
         else:
             plot_training_history(history)
+
+        # Сохранение модели если указан флаг --savemodel
+        if args.savemodel:
+            save_model_after_training(model, args.model, args.img_size, history)
 
     elif args.mode == 'predict':
         if not args.image:
@@ -397,6 +408,65 @@ def save_metrics(metrics, model_name):
     print(f"  Использование GPU: {metrics['gpu_used']:.1f}%")
 
     print(f"\nМетрики сохранены в: {json_file}")
+
+
+def save_model_after_training(model, model_type, img_size, history):
+    """
+    Сохраняет модель после полного обучения
+
+    Args:
+        model: обученная модель
+        model_type: тип модели (simple, dynamic, gap, resnet)
+        img_size: размер изображения в виде списка [ширина, высота]
+        history: история обучения
+    """
+    import datetime
+
+    # Создаем имя файла с указанием модели и размеров
+    width, height = img_size
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_filename = f"trained_{model_type}_{width}x{height}_{timestamp}.pth"
+
+    # Полный путь для сохранения
+    save_path = Path("checkpoints") / model_filename
+
+    # Подготавливаем данные для сохранения
+    checkpoint = {
+        'epoch': Config.NUM_EPOCHS,
+        'model_state_dict': model.state_dict(),
+        'val_acc': history['val_acc'][-1] if history['val_acc'] else 0.0,
+        'history': history,
+        'model_type': model_type,
+        'img_size': tuple(img_size),
+        'model_class': model.__class__.__name__,
+        'num_classes': Config.NUM_CLASSES,
+        'training_completed': True,
+        'save_timestamp': timestamp
+    }
+
+    # Сохраняем модель
+    torch.save(checkpoint, save_path)
+
+    # Выводим информацию
+    print(f"\n=== МОДЕЛЬ СОХРАНЕНА ===")
+    print(f"Файл: {save_path}")
+    print(f"Тип модели: {model_type}")
+    print(f"Размер изображения: {width}x{height}")
+    print(f"Точность валидации: {history['val_acc'][-1]:.2f}%")
+    print(f"Дата сохранения: {timestamp}")
+
+    # Также сохраняем дополнительную информацию о модели
+    info_file = save_path.with_suffix('.txt')
+    with open(info_file, 'w') as f:
+        f.write(f"Модель: {model_type}\n")
+        f.write(f"Размер изображения: {width}x{height}\n")
+        f.write(f"Дата обучения: {timestamp}\n")
+        f.write(f"Количество эпох: {Config.NUM_EPOCHS}\n")
+        f.write(f"Точность валидации: {history['val_acc'][-1]:.2f}%\n")
+        f.write(f"Класс модели: {model.__class__.__name__}\n")
+        f.write(f"Количество классов: {Config.NUM_CLASSES}\n")
+
+    print(f"Информация о модели сохранена в: {info_file}")
 
 
 if __name__ == "__main__":
